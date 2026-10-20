@@ -9,18 +9,20 @@ import {
   type ScheduleRule,
   type RoutineTask,
   type UrgentTask,
+  type CategoryNode,
+  createTaskId,
   createInboxItem 
 } from '@/core/contracts/task.types';
 
 export interface TriageTaskParams {
   id: TaskId;
   title?: string;
-  notes?: string;                 // По контракту BaseNode
+  notes?: string;
   parentId: TaskId | null;
-  kind: Exclude<NodeKind, 'category'>; // 'urgent' | 'routine' | 'one_off' | 'leisure'
+  kind: Exclude<NodeKind, 'category'>;
   estimatedMinutes: number;
-  deadline?: number;              // Timestamp в миллисекундах (для Urgent)
-  rules?: ScheduleRule[];         // Массив правил (для Routine)
+  deadline?: number;
+  rules?: ScheduleRule[];
 }
 
 export const nodesRepository = {
@@ -43,6 +45,30 @@ export const nodesRepository = {
   async getChildrenOf(parentId: TaskId | null): Promise<ArborisNode[]> {
     const allActive = await this.getActiveTreeNodes();
     return allActive.filter(node => node.parentId === parentId);
+  },
+
+  /**
+   * Быстрое создание категории/сферы дерева (US-2.1)
+   */
+  async createCategory(title: string, parentId: TaskId | null = null): Promise<CategoryNode> {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) {
+      throw new Error('Название категории не может быть пустым');
+    }
+
+    const now = Date.now();
+    const category: CategoryNode = {
+      id: createTaskId(crypto.randomUUID()),
+      parentId,
+      title: cleanTitle,
+      kind: 'category',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.nodes.add(category);
+    return category;
   },
 
   async createInboxTask(rawTitle: string): Promise<ActionableTask> {
@@ -81,7 +107,7 @@ export const nodesRepository = {
 
     if (params.kind === 'urgent') {
       const urgentUpdates = baseUpdates as Partial<UrgentTask>;
-      urgentUpdates.deadline = params.deadline ?? (now + 24 * 60 * 60 * 1000); // Дефолт: сутки
+      urgentUpdates.deadline = params.deadline ?? (now + 24 * 60 * 60 * 1000);
     }
 
     if (params.kind === 'routine') {
@@ -118,26 +144,22 @@ export const nodesRepository = {
   async getInboxCount(): Promise<number> {
     return db.nodes.where('status').equals('inbox').count();
   },
-    // src/shared/db/nodes.repository.ts
 
-    /**
- * Быстрый поиск похожих заметок с лимитом и ранней остановкой курсора (Early Exit).
- * Не забивает память V8, отсекает архивные узлы прямо в IndexedDB.
- */
-    async searchSimilarTasks(rawQuery: string, limit: number = 3): Promise<ActionableTask[]> {
-  const query = rawQuery.trim().toLowerCase();
-  if (query.length < 2) return [];
+  async searchSimilarTasks(rawQuery: string, limit: number = 3): Promise<ActionableTask[]> {
+    const query = rawQuery.trim().toLowerCase();
+    if (query.length < 2) return [];
 
-  // Используем потоковый фильтр Dexie с жестким limit.
-  // Движок IndexedDB прекратит перебор сразу, как наберет 3 совпадения.
-  const matches = await db.nodes
-    .filter((node) => {
-      // Ищем только среди незаархивированных задач
-      return node.status !== 'archived' && node.title.toLowerCase().includes(query);
-    })
-    .limit(limit)
-    .toArray();
+    const matches = await db.nodes
+      .filter((node) => {
+        return (
+          node.kind !== 'category' &&
+          node.status !== 'archived' &&
+          node.title.toLowerCase().includes(query)
+        );
+      })
+      .limit(limit)
+      .toArray();
 
-  return matches as ActionableTask[];
-    },
+    return matches as ActionableTask[];
+  },
 };

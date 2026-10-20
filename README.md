@@ -1,75 +1,104 @@
-# React + TypeScript + Vite
+# 🌲 Arboris
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> **Нейро-ориентированный Local-First планировщик и среда удержания фокуса с анти-кортизоловым UX и древовидным графом задач.**
 
-Currently, two official plugins are available:
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-8.x-646cff?style=flat-square&logo=vite)](https://vitejs.dev/)
+[![PixiJS](https://img.shields.io/badge/PixiJS-v8-e72264?style=flat-square&logo=pixijs)](https://pixijs.com/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38bdf8?style=flat-square&logo=tailwindcss)](https://tailwindcss.com/)
+[![Dexie.js](https://img.shields.io/badge/Dexie.js-IndexedDB-brightgreen?style=flat-square)](https://dexie.org/)
+[![Architecture](https://img.shields.io/badge/Architecture-Local--First-orange?style=flat-square)](#архитектурные-принципы)
+[![Docs](https://img.shields.io/badge/Docs--as--Code-Obsidian-purple?style=flat-square)](./docs/)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 💡 О проекте
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Большинство классических таск-менеджеров и трекеров привычек созданы для линейного мышления. Для людей с **СДВГ, расфокусом внимания и склонностью к прокрастинации** они быстро превращаются в источник стресса:
+* Списки из 50 задач вызывают **исполнительный паралич** (*Executive Dysfunction* — ступор перед выбором)[cite: 2, 7].
+* Сброс стриков и «усохшие ветки» запускают **петлю вины** (*Guilt Loop*), из-за которой приложение забрасывают.
+* Жесткие будильники и линейные календари разбиваются о **слепоту ко времени** (*Time Blindness*).
 
-## Expanding the ESLint configuration
+**Arboris** решает эти проблемы через смену парадигмы: **вместо бесконечных списков дел — интерактивный живой граф жизни**, мягкие недельные окна активности и выдача ровно **одного действия за раз**.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+---
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## 🧠 Ключевые продуктовые механики
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### 1. Семантический зум графа (Semantic Zooming)
+Все цели и сферы жизни визуализируются как единое органическое дерево на аппаратно-ускоренном Canvas (PixiJS v8). При погружении в узел (например, «Учеба») остальные ветви плавно скрываются: контекст изолируется, разгружая кратковременную память от информационного шума.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 2. Быстрая корзина с защитой от выгорания (15-min Inbox Triage)
+* **Zero Input Lag:** захват мысли на лету за 3 секунды без обязательного заполнения категорий и дедлайнов[cite: 2].
+* **Anti-Guilt плашка:** таймер разбора корзины имеет верхний каппинг ровно в **15 минут**[cite: 2]. Даже если в корзине 60 заметок, мозг не пугают неподъемными цифрами, а предлагают короткий спринт[cite: 2].
+* **Инвертированный триаж:** Суть мысли ➔ Характер задачи ➔ Длительность ➔ Посадка в дерево[cite: 2].
 
-```
+### 3. Кластеры бутонов и подушка безопасности (Grace Cushion)
+* Рутины не имеют жестких штрафов. Привычка визуализируется веткой из 25–30 закрытых почек[cite: 2, 3].
+* Одно выполнение распускает один бутон в цветок[cite: 2, 3].
+* **Подушка безопасности:** 1 пропуск полностью прощается системой[cite: 2, 3]. При 2 пропусках подряд опадает **ровно 1 бутон**, сохраняя весь остальной накопленный прогресс[cite: 2, 3].
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+### 4. Планирование «Камни и Вода» (Fuzzy Windows)
+* **Камни (Stones):** события с жестким временем (`exactTime`) первыми занимают слоты дня[cite: 2, 3].
+* **Вода (Water):** гибкие диапазоны (например, зал в окно Пн–Вт или Чт–Пт)[cite: 2, 3]. Алгоритм автоматически сдвигает задачу на свободный день, если смежный занят «камнем»[cite: 2, 3].
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### 5. Диспетчер фокуса: «Что делать прямо сейчас?»
+Вместо просмотра полного списка дел открывается экран с **одной карточкой**[cite: 2, 3]. Если задачу невозможно сделать сейчас, кнопка «Не сейчас» мягко сдвигает ее в середину очереди с временным кулдауном показов[cite: 2, 3].
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+---
 
-```
+## 🛠️ Технологический стек
+
+| Слой системы | Технология | Обоснование |
+| :--- | :--- | :--- |
+| **Рантайм & Язык** | Node.js 22 LTS / TypeScript 5.x | Строгая типизация контрактов данных, Discriminated Unions[cite: 2, 3]. |
+| **Сборщик & Стили** | Vite 8 + Tailwind CSS v4 | Холодный старт за ~240 мс, компиляция стилей через `@tailwindcss/vite`. |
+| **Графический движок** | PixiJS v8 (Canvas / WebGL) | Батчинг спрайтов[cite: 2], 60+ FPS при зуме и панорамировании сотен нод графа. |
+| **Стейт-менеджмент** | Zustand | Изоляция состояния от DOM, нулевой оверхед на лишние ререндеры. |
+| **База данных** | IndexedDB via Dexie.js | Local-First архитектура, составные B-Tree индексы `[status+kind]`[cite: 2, 3]. |
+| **Контейнеризация** | Docker (Multi-stage + Nginx) | Минималистичный образ для быстрой воспроизводимости и деплоя. |
+
+---
+
+## 🏛️ Архитектурные принципы
+
+* **Local-First:** все данные, алгоритмы очередей и связи дерева хранятся локально на устройстве пользователя[cite: 2, 3]. Нулевой сетевой лаг, полная автономность оффлайн, нулевая стоимость серверов на старте[cite: 2, 4].
+* **Docs-as-Code:** вся архитектура, ADR (Architecture Decision Records) и спецификации ведутся в формате Markdown внутри каталога `docs/` и синхронизируются с Obsidian Vault[cite: 2, 4]:
+  * `docs/adr/` — принятые архитектурные решения (ADR-0001 — ADR-0004)[cite: 2, 4].
+  * `docs/specs/` — строгие спецификации пайплайнов и расписаний[cite: 2, 4].
+  * `docs/backlog.md` — актуальный продуктовый бэклог по фазам[cite: 2, 4].
+* **Separation of Concerns:** доменные модели и алгоритмы очереди изолированы от UI-компонентов React и графики PixiJS[cite: 2, 4].
+
+---
+
+## 📂 Структура репозитория
+
+```text
+arboris/
+├── docs/                             # База знаний проекта (Obsidian Vault)
+│   ├── adr/                          # Architecture Decision Records
+│   ├── specs/                        # Спецификации доменной логики
+│   └── backlog.md                    # Актуальный бэклог спринтов
+│
+├── src/
+│   ├── core/                         # Чистая бизнес-логика (изолирована от DOM)
+│   │   ├── contracts/                # TypeScript-типы (ArborisNode, TaskId)
+│   │   └── store/                    # Zustand сторы состояния
+│   │
+│   ├── modules/                      # Функциональные модули системы
+│   │   ├── inbox/                    # QuickCaptureBar, TriageHeader, TriageModal
+│   │   ├── graph/                    # Холст PixiJS v8, движок раскладки дерева
+│   │   └── focus/                    # Диспетчер выдачи одного действия
+│   │
+│   ├── shared/                       # Переиспользуемые сервисы
+│   │   └── db/                       # Dexie DB schema и nodesRepository
+│   │
+│   ├── ui/                           # Базовые презентационные компоненты
+│   ├── App.tsx                       # Корневой контейнер экранов
+│   ├── main.tsx                      # Входная точка монтирования
+│   └── index.css                     # Tailwind v4 директивы
+│
+├── Dockerfile                        # Multi-Stage билд (Node Alpine -> Nginx)
+├── docker-compose.yml                # Запуск контейнера
+└── vite.config.ts                    # Конфигурация сборщика

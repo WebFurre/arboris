@@ -1,0 +1,399 @@
+// src/modules/graph/canvas/TreeCanvas.tsx
+
+import { useEffect, useRef, useState, useMemo } from 'react';
+import { Application, Container } from 'pixi.js';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { nodesRepository } from '@/shared/db/nodes.repository';
+import { useTreeStore } from '@/core/store/tree.store';
+import { computeGraphLayout } from '../engines/tree-layout.engine';
+import { GraphSceneManager } from '../renderers/graph.renderer';
+import { CreateNodeModal } from '../components/CreateNodeModal';
+import { NodeInspector } from '../components/NodeInspector';
+import { Plus, ArrowUp } from 'lucide-react';
+import type { ArborisNode, TaskId } from '@/core/contracts/task.types';
+
+interface TreeCanvasProps {
+  className?: string;
+}
+
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 3.0;
+const DRAG_THRESHOLD = 6;
+
+export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const appRef = useRef<Application | null>(null);
+  const worldRef = useRef<Container | null>(null);
+  const sceneManagerRef = useRef<GraphSceneManager | null>(null);
+
+  const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isDraggingRef = useRef(false);
+  const worldStartRef = useRef({ x: 0, y: 0 });
+
+  // Цели для плавной LERP-камеры
+  const cameraTargetRef = useRef<{
+    x: number;
+    y: number;
+    zoom: number;
+    rotation: number;
+    isAnimating: boolean;
+  }>({
+    x: 0,
+    y: 0,
+    zoom: 0.9,
+    rotation: 0,
+    isAnimating: false,
+  });
+
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  const activeRootId = useTreeStore((s) => s.activeRootId);
+  const selectedNodeId = useTreeStore((s) => s.selectedNodeId);
+  const setActiveRootId = useTreeStore((s) => s.setActiveRootId);
+  const setSelectedNodeId = useTreeStore((s) => s.setSelectedNodeId);
+  const setHoveredNodeId = useTreeStore((s) => s.setHoveredNodeId);
+
+  const activeNodes = useLiveQuery(() => nodesRepository.getActiveTreeNodes()) ?? [];
+  const currentRootNode = activeNodes.find((n) => n.id === activeRootId);
+
+  // Сбор всех узлов активной ветки (для мягкого затухания остальных)
+  const activeBranchIds = useMemo(() => {
+    if (!activeRootId) return null;
+    const branch = new Set<TaskId>();
+
+    // Собираем родителей вверх до корня
+    let curr: ArborisNode | undefined = activeNodes.find((n) => n.id === activeRootId);
+    while (curr) {
+      branch.add(curr.id);
+      curr = activeNodes.find((n) => n.id === curr?.parentId);
+    }
+
+    // Собираем детей вниз
+    const addDescendants = (pid: TaskId) => {
+      const kids = activeNodes.filter((n) => n.parentId === pid);
+      for (const k of kids) {
+        branch.add(k.id);
+        addDescendants(k.id);
+      }
+    };
+    addDescendants(activeRootId);
+
+    return branch;
+  }, [activeNodes, activeRootId]);
+
+  const handleNavigateUp = () => {
+    if (!activeRootId) return;
+    const parent = currentRootNode?.parentId ?? null;
+    setActiveRootId(parent);
+    setSelectedNodeId(parent);
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let isCancelled = false;
+    const app = new Application();
+
+    const initPixi = async () => {
+      try {
+        await app.init({
+          background: '#09090b',
+          resizeTo: container,
+          antialias: true,
+          autoDensity: true,
+          resolution: Math.min(window.devicePixelRatio || 1, 2),
+        });
+      } catch (err) {
+        console.error('Ошибка запуска PixiJS:', err);
+        return;
+      }
+
+      if (isCancelled) {
+        app.destroy(true, { children: true });
+        return;
+      }
+
+      appRef.current = app;
+      container.appendChild(app.canvas);
+
+      const world = new Container();
+      const linksLayer = new Container();
+      const nodesLayer = new Container();
+
+      world.addChild(linksLayer);
+      world.addChild(nodesLayer);
+      app.stage.addChild(world);
+
+      worldRef.current = world;
+      sceneManagerRef.current = new GraphSceneManager(linksLayer, nodesLayer);
+
+      world.x = container.clientWidth / 2;
+      world.y = container.clientHeight / 2;
+      cameraTargetRef.current.x = world.x;
+      cameraTargetRef.current.y = world.y;
+
+      let elapsed = 0;
+      app.ticker.add((ticker) => {
+        elapsed += ticker.deltaTime * 0.05;
+
+        // Кинематика камеры: LERP позиции, зума и вращения
+        const cam = cameraTargetRef.current;
+        if (cam.isAnimating && worldRef.current) {
+          const w = worldRef.current;
+          w.x += (cam.x - w.x) * 0.1;
+          w.y += (cam.y - w.y) * 0.1;
+          w.scale.x += (cam.zoom - w.scale.x) * 0.1;
+          w.scale.y = w.scale.x;
+
+          // Вращение по кратчайшей дуге окружности
+          let diff = (cam.rotation - w.rotation) % (Math.PI * 2);
+          if (diff < -Math.PI) diff += Math.PI * 2;
+          if (diff > Math.PI) diff -= Math.PI * 2;
+          w.rotation += diff * 0.1;
+
+          if (
+            Math.abs(cam.x - w.x) < 0.5 &&
+            Math.abs(cam.y - w.y) < 0.5 &&
+            Math.abs(diff) < 0.005 &&
+            Math.abs(cam.zoom - w.scale.x) < 0.005
+          ) {
+            w.x = cam.x;
+            w.y = cam.y;
+            w.rotation = cam.rotation;
+            w.scale.set(cam.zoom);
+            cam.isAnimating = false;
+          }
+        }
+
+        // Контр-вращение текста под текущий угол камеры
+        if (worldRef.current) {
+          sceneManagerRef.current?.updateLabelRotations(worldRef.current.rotation);
+        }
+
+        // Пульсация срочных задач
+        const pulse = 1 + Math.sin(elapsed * 2) * 0.06;
+        for (const child of nodesLayer.children) {
+          if (child.label === 'urgent_node') {
+            child.scale.set(pulse);
+          } else if (child.label === 'leisure_node') {
+            child.rotation = Math.sin(elapsed) * 0.05;
+          }
+        }
+      });
+    };
+
+    initPixi();
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const world = worldRef.current;
+      if (!world) return;
+
+      cameraTargetRef.current.isAnimating = false;
+
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const worldX = (mouseX - world.x) / world.scale.x;
+      const worldY = (mouseY - world.y) / world.scale.y;
+
+      const zoomFactor = Math.exp(-e.deltaY * 0.0015);
+      const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, world.scale.x * zoomFactor));
+
+      world.scale.set(nextScale);
+      world.x = mouseX - worldX * nextScale;
+      world.y = mouseY - worldY * nextScale;
+
+      cameraTargetRef.current.x = world.x;
+      cameraTargetRef.current.y = world.y;
+      cameraTargetRef.current.zoom = nextScale;
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      isCancelled = true;
+      container.removeEventListener('wheel', handleWheel);
+
+      sceneManagerRef.current?.destroy();
+      sceneManagerRef.current = null;
+
+      if (appRef.current) {
+        if (container.contains(app.canvas)) {
+          container.removeChild(app.canvas);
+        }
+        app.destroy(true, { children: true });
+        appRef.current = null;
+        worldRef.current = null;
+      }
+    };
+  }, []);
+
+  // Синхронизация раскладки и управление камерой
+  useEffect(() => {
+    const sceneManager = sceneManagerRef.current;
+    const container = containerRef.current;
+    if (!sceneManager || !container) return;
+
+    const layout = computeGraphLayout(activeNodes);
+
+    sceneManager.syncLayout(layout.nodes, layout.links, {
+      onNodeClick: (node: ArborisNode) => {
+        setActiveRootId(node.id);
+        setSelectedNodeId(node.id);
+      },
+      onNodeHover: (nodeId) => setHoveredNodeId(nodeId),
+    });
+
+    sceneManager.updateContextAlpha(activeBranchIds);
+
+    const screenCenterX = container.clientWidth / 2;
+    const screenCenterY = container.clientHeight / 2;
+
+    if (activeRootId && layout.nodes.has(activeRootId)) {
+      const nodePos = layout.nodes.get(activeRootId)!;
+      // Угол от центра мира к узлу
+      const theta = Math.atan2(nodePos.y, nodePos.x);
+
+      // Вращаем мир так, чтобы ветка смотрела строго вниз (+Y)
+      const targetRotation = Math.PI / 2 - theta;
+      const zoom = 1.35; // Увеличение для ощущения Солнца
+
+      // Ставим узел у самого верхнего края экрана (y = 40px)
+      const targetScreenX = screenCenterX;
+      const targetScreenY = 40;
+
+      const cos = Math.cos(targetRotation);
+      const sin = Math.sin(targetRotation);
+
+      // Матричное смещение мира
+      const worldX = targetScreenX - zoom * (nodePos.x * cos - nodePos.y * sin);
+      const worldY = targetScreenY - zoom * (nodePos.x * sin + nodePos.y * cos);
+
+      cameraTargetRef.current = {
+        x: worldX,
+        y: worldY,
+        zoom,
+        rotation: targetRotation,
+        isAnimating: true,
+      };
+    } else {
+      // Возврат к общему виду дерева
+      cameraTargetRef.current = {
+        x: screenCenterX,
+        y: screenCenterY,
+        zoom: 0.9,
+        rotation: 0,
+        isAnimating: true,
+      };
+    }
+  }, [activeNodes, activeRootId, activeBranchIds, setActiveRootId, setSelectedNodeId, setHoveredNodeId]);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 && e.button !== 1) return;
+    pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
+    isDraggingRef.current = false;
+
+    const world = worldRef.current;
+    if (world) {
+      worldStartRef.current = { x: world.x, y: world.y };
+    }
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointerDownPosRef.current) return;
+    const world = worldRef.current;
+    if (!world) return;
+
+    const dx = e.clientX - pointerDownPosRef.current.x;
+    const dy = e.clientY - pointerDownPosRef.current.y;
+
+    if (!isDraggingRef.current && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+      isDraggingRef.current = true;
+      cameraTargetRef.current.isAnimating = false;
+    }
+
+    if (isDraggingRef.current) {
+      world.x = worldStartRef.current.x + dx;
+      world.y = worldStartRef.current.y + dy;
+      cameraTargetRef.current.x = world.x;
+      cameraTargetRef.current.y = world.y;
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    pointerDownPosRef.current = null;
+    isDraggingRef.current = false;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Игнорируем
+    }
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onDoubleClick={handleNavigateUp}
+      className={`relative w-full h-full overflow-hidden bg-zinc-950 select-none touch-none cursor-grab active:cursor-grabbing ${className}`}
+    >
+      <div 
+        className="absolute top-20 left-4 z-20 flex items-center gap-2 pointer-events-auto"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {activeRootId && (
+          <button
+            type="button"
+            onClick={handleNavigateUp}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-xs font-medium text-emerald-400 border border-emerald-500/30 backdrop-blur-md shadow-xl transition-all cursor-pointer"
+          >
+            <ArrowUp className="w-3.5 h-3.5" />
+            <span>На уровень выше</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setIsCreateModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-xs font-medium text-zinc-300 hover:text-white border border-zinc-800 backdrop-blur-md shadow-xl transition-all cursor-pointer"
+        >
+          <Plus className="w-3.5 h-3.5 text-emerald-400" />
+          <span>{activeRootId ? 'Добавить в эту ветку' : 'Создать узел'}</span>
+        </button>
+      </div>
+
+      <NodeInspector
+        nodeId={selectedNodeId}
+        activeRootId={activeRootId}
+        allNodes={activeNodes}
+        onClose={() => setSelectedNodeId(null)}
+        onFocusBranch={(id) => {
+          setActiveRootId(id);
+          setSelectedNodeId(id);
+        }}
+      />
+
+      <div className="absolute bottom-4 left-4 pointer-events-none px-3 py-1.5 rounded-xl bg-zinc-900/80 backdrop-blur-md border border-zinc-800 text-[11px] font-mono text-zinc-400 flex items-center gap-2 shadow-lg z-10">
+        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <span>Двойной клик: Вверх • Клик: Зум в задачу</span>
+      </div>
+
+      <CreateNodeModal
+        isOpen={isCreateModalOpen}
+        parentId={activeRootId}
+        parentTitle={currentRootNode?.title}
+        onClose={() => setIsCreateModalOpen(false)}
+      />
+    </div>
+  );
+};
