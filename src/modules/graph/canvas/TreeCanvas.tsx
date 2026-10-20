@@ -1,6 +1,6 @@
 // src/modules/graph/canvas/TreeCanvas.tsx
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Application, Container } from 'pixi.js';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { nodesRepository } from '@/shared/db/nodes.repository';
@@ -9,16 +9,17 @@ import { computeGraphLayout } from '../engines/tree-layout.engine';
 import { GraphSceneManager } from '../renderers/graph.renderer';
 import { CreateNodeModal } from '../components/CreateNodeModal';
 import { NodeInspector } from '../components/NodeInspector';
-import { Plus, ArrowUp } from 'lucide-react';
-import type { ArborisNode, TaskId } from '@/core/contracts/task.types';
+import { Plus, ArrowUp, RotateCcw } from 'lucide-react';
+import type { ArborisNode } from '@/core/contracts/task.types';
 
 interface TreeCanvasProps {
   className?: string;
 }
 
-const MIN_ZOOM = 0.2;
+const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 3.0;
 const DRAG_THRESHOLD = 6;
+const INSPECTOR_WIDTH = 384;
 
 export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -31,18 +32,15 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
   const isDraggingRef = useRef(false);
   const worldStartRef = useRef({ x: 0, y: 0 });
 
-  // Цели для плавной LERP-камеры
   const cameraTargetRef = useRef<{
     x: number;
     y: number;
     zoom: number;
-    rotation: number;
     isAnimating: boolean;
   }>({
     x: 0,
     y: 0,
     zoom: 0.9,
-    rotation: 0,
     isAnimating: false,
   });
 
@@ -53,34 +51,10 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
   const setActiveRootId = useTreeStore((s) => s.setActiveRootId);
   const setSelectedNodeId = useTreeStore((s) => s.setSelectedNodeId);
   const setHoveredNodeId = useTreeStore((s) => s.setHoveredNodeId);
+  const resetFocus = useTreeStore((s) => s.resetFocus);
 
   const activeNodes = useLiveQuery(() => nodesRepository.getActiveTreeNodes()) ?? [];
   const currentRootNode = activeNodes.find((n) => n.id === activeRootId);
-
-  // Сбор всех узлов активной ветки (для мягкого затухания остальных)
-  const activeBranchIds = useMemo(() => {
-    if (!activeRootId) return null;
-    const branch = new Set<TaskId>();
-
-    // Собираем родителей вверх до корня
-    let curr: ArborisNode | undefined = activeNodes.find((n) => n.id === activeRootId);
-    while (curr) {
-      branch.add(curr.id);
-      curr = activeNodes.find((n) => n.id === curr?.parentId);
-    }
-
-    // Собираем детей вниз
-    const addDescendants = (pid: TaskId) => {
-      const kids = activeNodes.filter((n) => n.parentId === pid);
-      for (const k of kids) {
-        branch.add(k.id);
-        addDescendants(k.id);
-      }
-    };
-    addDescendants(activeRootId);
-
-    return branch;
-  }, [activeNodes, activeRootId]);
 
   const handleNavigateUp = () => {
     if (!activeRootId) return;
@@ -99,7 +73,7 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
     const initPixi = async () => {
       try {
         await app.init({
-          background: '#09090b',
+          background: '#061a12',
           resizeTo: container,
           antialias: true,
           autoDensity: true,
@@ -134,53 +108,33 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
       cameraTargetRef.current.x = world.x;
       cameraTargetRef.current.y = world.y;
 
-      let elapsed = 0;
+      let elapsedTime = 0;
       app.ticker.add((ticker) => {
-        elapsed += ticker.deltaTime * 0.05;
+        elapsedTime += ticker.deltaTime * 0.025;
 
-        // Кинематика камеры: LERP позиции, зума и вращения
+        // Медленное, плавное скольжение камеры (0.045 синхронно с узлами)
         const cam = cameraTargetRef.current;
         if (cam.isAnimating && worldRef.current) {
           const w = worldRef.current;
-          w.x += (cam.x - w.x) * 0.1;
-          w.y += (cam.y - w.y) * 0.1;
-          w.scale.x += (cam.zoom - w.scale.x) * 0.1;
+          const camLerp = Math.min(1, 0.045 * ticker.deltaTime);
+          w.x += (cam.x - w.x) * camLerp;
+          w.y += (cam.y - w.y) * camLerp;
+          w.scale.x += (cam.zoom - w.scale.x) * camLerp;
           w.scale.y = w.scale.x;
-
-          // Вращение по кратчайшей дуге окружности
-          let diff = (cam.rotation - w.rotation) % (Math.PI * 2);
-          if (diff < -Math.PI) diff += Math.PI * 2;
-          if (diff > Math.PI) diff -= Math.PI * 2;
-          w.rotation += diff * 0.1;
 
           if (
             Math.abs(cam.x - w.x) < 0.5 &&
             Math.abs(cam.y - w.y) < 0.5 &&
-            Math.abs(diff) < 0.005 &&
-            Math.abs(cam.zoom - w.scale.x) < 0.005
+            Math.abs(cam.zoom - w.scale.x) < 0.003
           ) {
             w.x = cam.x;
             w.y = cam.y;
-            w.rotation = cam.rotation;
             w.scale.set(cam.zoom);
             cam.isAnimating = false;
           }
         }
 
-        // Контр-вращение текста под текущий угол камеры
-        if (worldRef.current) {
-          sceneManagerRef.current?.updateLabelRotations(worldRef.current.rotation);
-        }
-
-        // Пульсация срочных задач
-        const pulse = 1 + Math.sin(elapsed * 2) * 0.06;
-        for (const child of nodesLayer.children) {
-          if (child.label === 'urgent_node') {
-            child.scale.set(pulse);
-          } else if (child.label === 'leisure_node') {
-            child.rotation = Math.sin(elapsed) * 0.05;
-          }
-        }
+        sceneManagerRef.current?.updatePhysics(ticker.deltaTime, elapsedTime);
       });
     };
 
@@ -232,65 +186,46 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
     };
   }, []);
 
-  // Синхронизация раскладки и управление камерой
   useEffect(() => {
     const sceneManager = sceneManagerRef.current;
     const container = containerRef.current;
     if (!sceneManager || !container) return;
 
-    const layout = computeGraphLayout(activeNodes);
+    const layout = computeGraphLayout(activeNodes, activeRootId);
 
-    sceneManager.syncLayout(layout.nodes, layout.links, {
-      onNodeClick: (node: ArborisNode) => {
-        setActiveRootId(node.id);
-        setSelectedNodeId(node.id);
-      },
-      onNodeHover: (nodeId) => setHoveredNodeId(nodeId),
-    });
+    sceneManager.syncLayout(
+      layout.nodes,
+      layout.links,
+      layout.offscreenLeisureCandidates,
+      activeRootId,
+      {
+        onNodeClick: (node: ArborisNode) => {
+          setActiveRootId(node.id);
+          setSelectedNodeId(node.id);
+        },
+        onNodeHover: (nodeId) => setHoveredNodeId(nodeId),
+      }
+    );
 
-    sceneManager.updateContextAlpha(activeBranchIds);
-
-    const screenCenterX = container.clientWidth / 2;
-    const screenCenterY = container.clientHeight / 2;
-
-    if (activeRootId && layout.nodes.has(activeRootId)) {
-      const nodePos = layout.nodes.get(activeRootId)!;
-      // Угол от центра мира к узлу
-      const theta = Math.atan2(nodePos.y, nodePos.x);
-
-      // Вращаем мир так, чтобы ветка смотрела строго вниз (+Y)
-      const targetRotation = Math.PI / 2 - theta;
-      const zoom = 1.35; // Увеличение для ощущения Солнца
-
-      // Ставим узел у самого верхнего края экрана (y = 40px)
-      const targetScreenX = screenCenterX;
-      const targetScreenY = 40;
-
-      const cos = Math.cos(targetRotation);
-      const sin = Math.sin(targetRotation);
-
-      // Матричное смещение мира
-      const worldX = targetScreenX - zoom * (nodePos.x * cos - nodePos.y * sin);
-      const worldY = targetScreenY - zoom * (nodePos.x * sin + nodePos.y * cos);
+    if (activeRootId) {
+      const parentAnchorX = container.clientWidth - INSPECTOR_WIDTH - 35;
+      const parentAnchorY = 55;
 
       cameraTargetRef.current = {
-        x: worldX,
-        y: worldY,
-        zoom,
-        rotation: targetRotation,
+        x: Math.max(240, parentAnchorX),
+        y: parentAnchorY,
+        zoom: 1.0,
         isAnimating: true,
       };
     } else {
-      // Возврат к общему виду дерева
       cameraTargetRef.current = {
-        x: screenCenterX,
-        y: screenCenterY,
-        zoom: 0.9,
-        rotation: 0,
+        x: container.clientWidth / 2,
+        y: container.clientHeight / 2,
+        zoom: 0.85,
         isAnimating: true,
       };
     }
-  }, [activeNodes, activeRootId, activeBranchIds, setActiveRootId, setSelectedNodeId, setHoveredNodeId]);
+  }, [activeNodes, activeRootId, setActiveRootId, setSelectedNodeId, setHoveredNodeId]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 && e.button !== 1) return;
@@ -344,7 +279,7 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
       onDoubleClick={handleNavigateUp}
-      className={`relative w-full h-full overflow-hidden bg-zinc-950 select-none touch-none cursor-grab active:cursor-grabbing ${className}`}
+      className={`relative w-full h-full overflow-hidden bg-[#061a12] select-none touch-none cursor-grab active:cursor-grabbing ${className}`}
     >
       <div 
         className="absolute top-20 left-4 z-20 flex items-center gap-2 pointer-events-auto"
@@ -352,14 +287,26 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
         onClick={(e) => e.stopPropagation()}
       >
         {activeRootId && (
-          <button
-            type="button"
-            onClick={handleNavigateUp}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-xs font-medium text-emerald-400 border border-emerald-500/30 backdrop-blur-md shadow-xl transition-all cursor-pointer"
-          >
-            <ArrowUp className="w-3.5 h-3.5" />
-            <span>На уровень выше</span>
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={handleNavigateUp}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-xs font-medium text-emerald-400 border border-emerald-500/30 backdrop-blur-md shadow-xl transition-all cursor-pointer"
+            >
+              <ArrowUp className="w-3.5 h-3.5" />
+              <span>На уровень выше</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => resetFocus()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-xs font-medium text-zinc-400 hover:text-zinc-200 border border-zinc-800 backdrop-blur-md shadow-xl transition-all cursor-pointer"
+              title="Вернуться ко всему дереву"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Весь граф</span>
+            </button>
+          </>
         )}
 
         <button
@@ -368,7 +315,7 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-xs font-medium text-zinc-300 hover:text-white border border-zinc-800 backdrop-blur-md shadow-xl transition-all cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5 text-emerald-400" />
-          <span>{activeRootId ? 'Добавить в эту ветку' : 'Создать узел'}</span>
+          <span>{activeRootId ? 'Добавить в этот узел' : 'Создать узел'}</span>
         </button>
       </div>
 
@@ -385,7 +332,7 @@ export const TreeCanvas = ({ className = '' }: TreeCanvasProps) => {
 
       <div className="absolute bottom-4 left-4 pointer-events-none px-3 py-1.5 rounded-xl bg-zinc-900/80 backdrop-blur-md border border-zinc-800 text-[11px] font-mono text-zinc-400 flex items-center gap-2 shadow-lg z-10">
         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-        <span>Двойной клик: Вверх • Клик: Зум в задачу</span>
+        <span>Клик: Фокус в углу заметки • Двойной клик: Назад • Мышь: Свободный сдвиг</span>
       </div>
 
       <CreateNodeModal
